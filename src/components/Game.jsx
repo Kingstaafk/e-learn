@@ -1,136 +1,251 @@
-import React, { useState } from "react";
-import SpeechRecognition, {
-  useSpeechRecognition,
-} from "react-speech-recognition";
+import React from "react";
+import SpeechRecognition from "react-speech-recognition";
 import { questions } from "../data/questions";
 import "./Game.css";
 
-const Game = () => {
-  const [isSplashScreenVisible, setIsSplashScreenVisible] = useState(true);
-  const [isTransitioning, setIsTransitioning] = useState(false);
-  const [currentQuestionIndex, setCurrentQuestionIndex] = useState(0);
-  const [score, setScore] = useState(0);
-  const [feedback, setFeedback] = useState("");
-  const [showPopup, setShowPopup] = useState(false);
-  const [showResultPopup, setShowResultPopup] = useState(false);
-
-  const { transcript, listening, resetTranscript } = useSpeechRecognition();
-
-  if (!SpeechRecognition.browserSupportsSpeechRecognition()) {
-    return <div>Your browser does not support speech recognition.</div>;
+class Game extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = {
+      isSplashScreenVisible: true,
+      isTransitioning: false,
+      currentQuestionIndex: 0,
+      score: 0,
+      feedback: "",
+      showPopup: false,
+      showResultPopup: false,
+      transcript: "",
+      listening: false,
+      microphonePermissionGranted: false, // New state for permission status
+    };
+    this.speechSynthesis = window.speechSynthesis;
   }
 
-  const handleStartGame = () => {
-    setIsTransitioning(true); // Trigger the fade-out transition.
-    setTimeout(() => {
-      setIsSplashScreenVisible(false); // Hide splash screen after transition.
-    }, 1000); // Duration matches CSS transition time.
+  componentDidUpdate(prevProps, prevState) {
+    const { isSplashScreenVisible, showResultPopup, currentQuestionIndex } =
+      this.state;
+
+    // Trigger question reading when conditions change
+    if (
+      prevState.isSplashScreenVisible !== isSplashScreenVisible &&
+      !isSplashScreenVisible &&
+      !showResultPopup
+    ) {
+      this.readQuestion(questions[currentQuestionIndex].question);
+    }
+
+    if (
+      prevState.currentQuestionIndex !== currentQuestionIndex &&
+      !showResultPopup
+    ) {
+      this.readQuestion(questions[currentQuestionIndex].question);
+    }
+  }
+
+  // New method to request microphone permission
+  requestMicrophonePermission = () => {
+    navigator.mediaDevices
+      .getUserMedia({ audio: true })
+      .then(() => {
+        this.setState({ microphonePermissionGranted: true });
+      })
+      .catch((err) => {
+        console.error("Microphone permission denied:", err);
+        alert("Microphone permission is required for this feature.");
+        this.setState({ microphonePermissionGranted: false });
+      });
   };
 
-  const currentQuestion = questions[currentQuestionIndex];
+  handleStartGame = () => {
+    // Request permission when starting the game
+    this.requestMicrophonePermission();
+    if (!this.state.microphonePermissionGranted) {
+      return; // Exit early if permission is not granted
+    }
 
-  const handleTapToSpeak = () => {
+    this.setState({ isTransitioning: true });
+    setTimeout(() => {
+      this.setState({ isSplashScreenVisible: false });
+    }, 1000); // Matches CSS transition duration
+  };
+
+  handleTapToSpeak = () => {
+    const { listening } = this.state;
+
+    if (!this.state.microphonePermissionGranted) {
+      alert("Microphone permission is required to continue.");
+      return;
+    }
+
     if (listening) {
       SpeechRecognition.stopListening();
-      handleResult(transcript); // Evaluate the transcript when the user stops speaking.
+      const { transcript } = SpeechRecognition;
+      console.log("Transcript:", transcript); // Debugging log
+      this.setState({ transcript }); // Save the transcript when listening stops
+      this.handleResult(transcript); // Evaluate the transcript
     } else {
-      resetTranscript(); // Clear previous transcript.
-      SpeechRecognition.startListening();
+      this.setState({ transcript: "" }, () => {
+        SpeechRecognition.startListening({
+          continuous: false,
+          language: "en-US",
+        });
+      });
     }
+
+    this.setState((prevState) => ({ listening: !prevState.listening }));
   };
 
-  const handleResult = (userInput) => {
-    const similarity =
-      userInput.toLowerCase() === currentQuestion.answer.toLowerCase();
-    if (similarity) {
-      setScore(score + 1);
-      setFeedback("✅ Correct!");
+  handleResult = (userInput) => {
+    const { currentQuestionIndex, score } = this.state;
+    const currentQuestion = questions[currentQuestionIndex];
+
+    // Default to an empty string if userInput is undefined
+    const normalizedInput = userInput ? userInput.toLowerCase() : "";
+
+    const isCorrect = normalizedInput === currentQuestion.answer.toLowerCase();
+    console.log(`Question: ${currentQuestion.question}`);
+    console.log(`User's Response: ${userInput || "No Response"}`);
+    console.log(`Correct Answer: ${currentQuestion.answer}`);
+    console.log(`Result: ${isCorrect ? "Correct" : "Incorrect"}`);
+
+    if (isCorrect) {
+      this.setState({
+        score: score + 1,
+        feedback: "✅ Correct!",
+        showPopup: true,
+      });
     } else {
-      setFeedback("❌ Incorrect. Try Again!");
+      this.setState({
+        feedback: "❌ Incorrect. Try Again!",
+        showPopup: true,
+      });
     }
 
-    setShowPopup(true);
     setTimeout(() => {
-      setShowPopup(false);
-      setFeedback("");
+      this.setState({ showPopup: false, feedback: "" });
       if (currentQuestionIndex < questions.length - 1) {
-        setCurrentQuestionIndex(currentQuestionIndex + 1);
+        this.setState({ currentQuestionIndex: currentQuestionIndex + 1 });
       } else {
-        setShowResultPopup(true);
+        this.setState({ showResultPopup: true });
       }
     }, 2000);
   };
 
-  const restartGame = () => {
-    setShowResultPopup(false);
-    setCurrentQuestionIndex(0);
-    setScore(0);
-    resetTranscript();
+  readQuestion = (text) => {
+    const utterance = new SpeechSynthesisUtterance(text);
+    utterance.lang = "en-US";
+    this.speechSynthesis.speak(utterance);
   };
 
-  return (
-    <div className="game-container">
-      {isSplashScreenVisible ? (
-        <div className={`splash-screen ${isTransitioning ? "fade-out" : ""}`}>
-          <h1 className="splash-title">🎮 English Learning Game</h1>
-          <p className="splash-subtitle">Learn while having fun!</p>
-          <button className="play-button" onClick={handleStartGame}>
-            Play Game
-          </button>
-        </div>
-      ) : (
-        <>
-          <h1 className="game-title">English Learning Game</h1>
-          {/* Person Asking the Question */}
-          <div className="person-container">
-            <img
-              src="/images/person-asking.png"
-              alt="Person Asking"
-              className="person-image"
-            />
-            <div className="chat-bubble">
-              <p>
-                Question {currentQuestionIndex + 1}: {currentQuestion.question}
-              </p>
-            </div>
-          </div>
+  restartGame = () => {
+    this.setState(
+      {
+        showResultPopup: false,
+        currentQuestionIndex: 0,
+        score: 0,
+        transcript: "",
+        listening: false,
+      },
+      () => {
+        this.readQuestion(questions[0].question);
+      }
+    );
+  };
 
-          {/* Control Section */}
-          <div className="control-section">
-            <button className="control-btn" onClick={handleTapToSpeak}>
-              {listening ? "Listening..." : "Tap to Speak"}
+  render() {
+    const {
+      isSplashScreenVisible,
+      isTransitioning,
+      currentQuestionIndex,
+      score,
+      feedback,
+      showPopup,
+      showResultPopup,
+      listening,
+      transcript,
+      microphonePermissionGranted,
+    } = this.state;
+
+    const currentQuestion = questions[currentQuestionIndex];
+
+    return (
+      <div className="game-container">
+        {isSplashScreenVisible ? (
+          <div className={`splash-screen ${isTransitioning ? "fade-out" : ""}`}>
+            <h1 className="splash-title">🎮 English Learning Game</h1>
+            <p className="splash-subtitle">Learn while having fun!</p>
+            <button className="play-button" onClick={this.handleStartGame}>
+              Play Game
             </button>
           </div>
-
-          {/* Feedback and Popups */}
-          <div className="feedback-container">
-            {feedback && <p className="feedback">{feedback}</p>}
-          </div>
-
-          {showPopup && (
-            <div className="popup">
-              <h2>{feedback}</h2>
-            </div>
-          )}
-
-          {showResultPopup && (
-            <div className="result-popup">
-              <h1>Game Over!</h1>
-              <div className="score-animation">
-                <span className="score-number">{score}</span>
-                <p>Points</p>
+        ) : (
+          <>
+            <h1 className="game-title">English Learning Game</h1>
+            {/* Person Asking the Question */}
+            <div className="person-container">
+              <img
+                src="/images/person-asking.png"
+                alt="Person Asking"
+                className="person-image"
+              />
+              <div className="chat-bubble">
+                <p>
+                  Question {currentQuestionIndex + 1}:{" "}
+                  {currentQuestion.question}
+                </p>
               </div>
-              <button className="restart-btn" onClick={restartGame}>
-                Play Again
+            </div>
+
+            {/* Display Required Answer */}
+            <div className="required-answer">
+              <p className="recorded-answer-title">
+                Required Answer: {currentQuestion.answer}
+              </p>
+            </div>
+
+            {/* Display User's Recorded Answer */}
+            <div className="recorded-answer-container">
+              <p className="recorded-answer-title">Your Answer:</p>
+              <p className="recorded-answer">{transcript || "..."}</p>
+            </div>
+
+            {/* Control Section */}
+            <div className="control-section">
+              <button className="control-btn" onClick={this.handleTapToSpeak}>
+                {listening ? "Listening..." : "Tap to Speak"}
               </button>
             </div>
-          )}
 
-          <h3>Score: {score}</h3>
-        </>
-      )}
-    </div>
-  );
-};
+            {/* Feedback and Popups */}
+            <div className="feedback-container">
+              {feedback && <p className="feedback">{feedback}</p>}
+            </div>
+
+            {showPopup && (
+              <div className="popup">
+                <h2>{feedback}</h2>
+              </div>
+            )}
+
+            {showResultPopup && (
+              <div className="result-popup">
+                <h1>Game Over!</h1>
+                <div className="score-animation">
+                  <span className="score-number">{score}</span>
+                  <p>Points</p>
+                </div>
+                <button className="restart-btn" onClick={this.restartGame}>
+                  Play Again
+                </button>
+              </div>
+            )}
+
+            <h3>Score: {score}</h3>
+          </>
+        )}
+      </div>
+    );
+  }
+}
 
 export default Game;
